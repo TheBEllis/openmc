@@ -5,6 +5,7 @@
 #define OPENMC_SOURCE_H
 
 #include <limits>
+#include <memory>
 #include <unordered_set>
 
 #include "pugixml.hpp"
@@ -78,6 +79,9 @@ public:
   virtual SourceSite sample(uint64_t* seed) const = 0;
 
   static unique_ptr<Source> create(pugi::xml_node node);
+
+  unique_ptr<Source> create(
+    std::unique_ptr<std::vector<double>> spectra, std::vector<double>* bins);
 
 protected:
   // Strategy used for rejecting sites when constraints are applied. KILL means
@@ -210,6 +214,8 @@ public:
   // Constructors
   explicit MeshSource(pugi::xml_node node);
 
+  MeshSource(std::unique_ptr<std::vector<double>> spectras,
+    std::unique_ptr<std::vector<double>> bins, int mesh_id);
   //! Sample from the external source distribution
   //! \param[inout] seed Pseudorandom seed pointer
   //! \return Sampled site

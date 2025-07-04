@@ -1,4 +1,5 @@
 #include "openmc/source.h"
+#include <memory>
 
 #if defined(__unix__) || (defined(__APPLE__) && defined(__MACH__))
 #define HAS_DYNAMIC_LINKING
@@ -94,6 +95,20 @@ unique_ptr<Source> Source::create(pugi::xml_node node)
       return make_unique<IndependentSource>(node);
     }
   }
+}
+
+unique_ptr<Source> Source::create(
+  std::unique_ptr<std::vector<double>> energy_spectra,
+  std::vector<double>* energy_bins)
+{
+  UPtrDist energy =
+    std::make_unique<Tabular>(energy_spectra.get()->data(), energy_bins->data(),
+      energy_spectra.get()->size(), Interpolation::histogram);
+  UPtrDist time = nullptr;
+  UPtrSpace space = nullptr;
+  UPtrAngle angle = nullptr;
+  return make_unique<IndependentSource>(
+    std::move(space), std::move(angle), std::move(energy), std::move(time));
 }
 
 void Source::read_constraints(pugi::xml_node node)
@@ -541,6 +556,47 @@ MeshSource::MeshSource(pugi::xml_node node) : Source(node)
   for (auto source_node : node.children("source")) {
     sources_.emplace_back(Source::create(source_node));
     strengths.push_back(sources_.back()->strength());
+  }
+
+  // the number of source distributions should either be one or equal to the
+  // number of mesh elements
+  if (sources_.size() > 1 && sources_.size() != mesh->n_bins()) {
+    fatal_error(fmt::format("Incorrect number of source distributions ({}) for "
+                            "mesh source with {} elements.",
+      sources_.size(), mesh->n_bins()));
+  }
+
+  space_ = std::make_unique<MeshSpatial>(mesh_idx, strengths);
+}
+
+MeshSource::MeshSource(std::unique_ptr<std::vector<double>> spectras,
+  std::unique_ptr<std::vector<double>> energy_bins, int mesh_id)
+  : Source()
+{
+
+  int32_t mesh_idx = model::mesh_map.at(mesh_id);
+  const auto& mesh = model::meshes[mesh_idx];
+
+  int32_t n_bins = energy_bins.get()->size() - 1;
+
+  std::vector<double> strengths;
+
+  // read all source distributions and populate strengths vector for MeshSpatial
+  // object
+  for (int elem_id = 0; elem_id < mesh->n_bins(); elem_id++) {
+
+    // Create source_spectra vector representing spectra for element 'elem_id'
+    std::unique_ptr<std::vector<double>> source_spectra =
+      std::make_unique<std::vector<double>>(
+        spectras.get()->at(elem_id * n_bins),
+        spectras.get()->at((elem_id + 1) * n_bins));
+
+    // Add element source to sources_ vector
+    sources_.emplace_back(
+      Source::create(std::move(source_spectra), energy_bins.get()));
+
+    // For now, set combined strength to 1
+    strengths.push_back(1.0 / spectras.get()->size());
   }
 
   // the number of source distributions should either be one or equal to the
